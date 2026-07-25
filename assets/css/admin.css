@@ -1,0 +1,145 @@
+.wprs-wrap .wprs-scaffold-meta th {
+	width: 180px;
+	vertical-align: top;
+}
+
+.wprs-wrap .notice.inline {
+	margin: 1em 0;
+}
+
+.wprs-terms-toolbar {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin: 1em 0;
+}
+
+.wprs-terms-toolbar__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.wprs-terms-search {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+}
+
+.wprs-modal {
+	position: fixed;
+	inset: 0;
+	z-index: 100000;
+	background: rgba(0, 0, 0, 0.45);
+	display: flex;
+	align-items: flex-start;
+	justify-content: center;
+	padding: 8vh 16px 16px;
+}
+
+.wprs-modal[hidden] {
+	display: none !important;
+}
+
+.wprs-modal__dialog {
+	background: #fff;
+	border-radius: 4px;
+	padding: 20px 24px;
+	width: 520px;
+	max-width: 100%;
+	position: relative;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.wprs-modal__close {
+	position: absolute;
+	right: 12px;
+	top: 8px;
+	border: 0;
+	background: transparent;
+	font-size: 24px;
+	line-height: 1;
+	cursor: pointer;
+	color: #646970;
+}
+
+.wprs-modal__dialog h2 {
+	margin-top: 0;
+	padding-right: 28px;
+}
+
+.wprs-modal .required {
+	color: #d63638;
+}
+
+.wprs-wrap .button-link-delete {
+	color: #b32d2e;
+}
+
+.wprs-scan-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 1em 0;
+}
+
+.wprs-scan-progress {
+	margin: 1em 0 1.5em;
+	max-width: 640px;
+}
+
+.wprs-scan-progress__bar {
+	height: 10px;
+	background: #dcdcde;
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.wprs-scan-progress__bar span {
+	display: block;
+	height: 100%;
+	width: 0;
+	background: #2271b1;
+	transition: width 0.2s ease;
+}
+
+.wprs-tabs {
+	margin: 1.5em 0 1em;
+}
+
+.wprs-filters {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+	margin: 1em 0;
+}
+
+.wprs-mark {
+	background: #fbc4c4;
+	color: #c00;
+	padding: 0 2px;
+}
+
+.wprs-chip {
+	display: inline-block;
+	margin: 0 6px 4px 0;
+	padding: 2px 6px;
+	background: #f0f0f1;
+	border-radius: 3px;
+	font-size: 12px;
+}
+
+.wprs-snip {
+	margin-bottom: 0.75em;
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+.wprs-snip-cell,
+.wprs-terms-cell,
+.wprs-ignored-cell {
+	word-break: break-word;
+}
