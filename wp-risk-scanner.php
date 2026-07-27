@@ -29,6 +29,7 @@ require_once WPRS_PATH . 'includes/class-settings.php';
 require_once WPRS_PATH . 'includes/class-activator.php';
 require_once WPRS_PATH . 'includes/class-terms.php';
 require_once WPRS_PATH . 'includes/class-scanner.php';
+require_once WPRS_PATH . 'includes/class-archive-scanner.php';
 require_once WPRS_PATH . 'includes/class-interceptor.php';
 require_once WPRS_PATH . 'includes/class-notifier.php';
 require_once WPRS_PATH . 'includes/class-cron.php';

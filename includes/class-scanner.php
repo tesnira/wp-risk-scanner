@@ -391,100 +391,148 @@ class WPRS_Scanner {
 	/**
 	 * 写入扫描日志，并清理 15 天前记录。
 	 *
-	 * @param string $type 类型键。
-	 * @param string $label 展示文案。
-	 * @param int    $posts_scanned 扫描篇数。
-	 * @param int    $risk_count 风险数。
-	 * @param int    $duration_ms 耗时。
-	 * @param int    $failed_posts 失败数。
-	 * @param string $last_error 最后错误。
+	 * @param string $type               类型键。
+	 * @param string $label              展示文案。
+	 * @param int    $posts_scanned      扫描篇数。
+	 * @param int    $risk_count         文章风险数。
+	 * @param int    $duration_ms        耗时。
+	 * @param int    $failed_posts       失败数。
+	 * @param string $last_error         最后错误。
+	 * @param int    $archives_scanned   归档扫描数。
+	 * @param int    $archives_risk_count 归档风险数。
 	 * @return void
 	 */
-	public static function write_log( $type, $label, $posts_scanned, $risk_count, $duration_ms, $failed_posts, $last_error ) {
+	public static function write_log( $type, $label, $posts_scanned, $risk_count, $duration_ms, $failed_posts, $last_error, $archives_scanned = 0, $archives_risk_count = 0 ) {
 		global $wpdb;
 		$user = wp_get_current_user();
 		$wpdb->insert(
 			WPRS_Activator::table_log(),
 			array(
-				'scan_type'            => sanitize_key( $type ),
-				'scan_type_label'      => sanitize_text_field( $label ),
-				'posts_scanned'        => (int) $posts_scanned,
-				'risk_count'           => (int) $risk_count,
-				'archives_scanned'     => 0,
-				'archives_risk_count'  => 0,
-				'execution_time_ms'    => (int) $duration_ms,
-				'failed_posts'         => (int) $failed_posts,
-				'last_error'           => (string) $last_error,
-				'operator'             => $user && $user->exists() ? (string) $user->user_login : '',
-				'created_at'           => current_time( 'mysql' ),
+				'scan_type'           => sanitize_key( $type ),
+				'scan_type_label'     => sanitize_text_field( $label ),
+				'posts_scanned'       => (int) $posts_scanned,
+				'risk_count'          => (int) $risk_count,
+				'archives_scanned'    => (int) $archives_scanned,
+				'archives_risk_count' => (int) $archives_risk_count,
+				'execution_time_ms'   => (int) $duration_ms,
+				'failed_posts'        => (int) $failed_posts,
+				'last_error'          => (string) $last_error,
+				'operator'            => $user && $user->exists() ? (string) $user->user_login : '',
+				'created_at'          => current_time( 'mysql' ),
 			)
 		);
-		$log = WPRS_Activator::table_log();
+		$log    = WPRS_Activator::table_log();
 		$cutoff = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp', true ) - 15 * DAY_IN_SECONDS );
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$wpdb->query( $wpdb->prepare( "DELETE FROM {$log} WHERE created_at < %s", $cutoff ) );
 	}
 
 	/**
-	 * 查询风险结果列表。
+	 * 查询风险结果列表（文章 ∪ 归档，可按资源类型筛选）。
 	 *
 	 * @param array<string, mixed> $args 筛选参数。
 	 * @return array{items: array<int, object>, total: int, pages: int, offset: int}
 	 */
 	public static function query_results( $args = array() ) {
 		global $wpdb;
-		$table       = WPRS_Activator::table_results();
-		$page        = max( 1, isset( $args['paged'] ) ? (int) $args['paged'] : 1 );
-		$per_page    = max( 1, min( 100, isset( $args['per_page'] ) ? (int) $args['per_page'] : 20 ) );
-		$offset      = ( $page - 1 ) * $per_page;
-		$status      = isset( $args['status'] ) ? sanitize_key( $args['status'] ) : 'risk';
-		$post_type   = isset( $args['post_type'] ) ? sanitize_key( $args['post_type'] ) : '';
-		$search      = isset( $args['s'] ) ? sanitize_text_field( (string) $args['s'] ) : '';
-		$search_type = isset( $args['search_type'] ) ? sanitize_key( $args['search_type'] ) : 'title';
+		$table_posts    = WPRS_Activator::table_results();
+		$table_archives = WPRS_Activator::table_archives();
+		$page           = max( 1, isset( $args['paged'] ) ? (int) $args['paged'] : 1 );
+		$per_page       = max( 1, min( 100, isset( $args['per_page'] ) ? (int) $args['per_page'] : 20 ) );
+		$offset         = ( $page - 1 ) * $per_page;
+		$status         = isset( $args['status'] ) ? sanitize_key( $args['status'] ) : 'risk';
+		$post_type      = isset( $args['post_type'] ) ? sanitize_key( $args['post_type'] ) : '';
+		$search         = isset( $args['s'] ) ? sanitize_text_field( (string) $args['s'] ) : '';
+		$search_type    = isset( $args['search_type'] ) ? sanitize_key( $args['search_type'] ) : 'title';
+		$resource       = isset( $args['resource_type'] ) ? sanitize_key( $args['resource_type'] ) : 'all';
 		if ( ! in_array( $search_type, array( 'title', 'risk_term' ), true ) ) {
 			$search_type = 'title';
 		}
+		if ( ! in_array( $resource, array( 'post', 'archive', 'all' ), true ) ) {
+			$resource = 'all';
+		}
+		if ( 'compliant' === $status ) {
+			$status = 'clean';
+		}
 
-		$where  = array( '1=1' );
-		$params = array();
+		$risk_sql  = "risk_terms_found IS NOT NULL AND risk_terms_found != '' AND risk_terms_found != '[]'";
+		$clean_sql = "(risk_terms_found IS NULL OR risk_terms_found = '' OR risk_terms_found = '[]')";
+
+		$post_where = array( '1=1' );
+		$post_params = array();
+		$arc_where   = array( '1=1' );
+		$arc_params  = array();
 
 		if ( 'risk' === $status ) {
-			$where[] = "risk_terms_found IS NOT NULL AND risk_terms_found != '' AND risk_terms_found != '[]'";
-		} elseif ( 'clean' === $status || 'compliant' === $status ) {
-			$where[] = "(risk_terms_found IS NULL OR risk_terms_found = '' OR risk_terms_found = '[]')";
+			$post_where[] = $risk_sql;
+			$arc_where[]  = $risk_sql;
+		} elseif ( 'clean' === $status ) {
+			$post_where[] = $clean_sql;
+			$arc_where[]  = $clean_sql;
 		}
 		if ( '' !== $post_type ) {
-			$where[]  = 'post_type = %s';
-			$params[] = $post_type;
+			$post_where[]  = 'post_type = %s';
+			$post_params[] = $post_type;
+			$arc_where[]   = 'taxonomy = %s';
+			$arc_params[]  = $post_type;
 		}
 		if ( '' !== $search ) {
 			if ( 'risk_term' === $search_type ) {
-				$where[]  = 'risk_terms_found LIKE %s';
-				$params[] = '%' . $wpdb->esc_like( $search ) . '%';
+				$post_where[]  = 'risk_terms_found LIKE %s';
+				$post_params[] = '%' . $wpdb->esc_like( $search ) . '%';
+				$arc_where[]   = 'risk_terms_found LIKE %s';
+				$arc_params[]  = '%' . $wpdb->esc_like( $search ) . '%';
 			} else {
-				$where[]  = 'post_title LIKE %s';
-				$params[] = '%' . $wpdb->esc_like( $search ) . '%';
+				$post_where[]  = 'post_title LIKE %s';
+				$post_params[] = '%' . $wpdb->esc_like( $search ) . '%';
+				$arc_where[]   = 'title LIKE %s';
+				$arc_params[]  = '%' . $wpdb->esc_like( $search ) . '%';
 			}
 		}
 
-		$where_sql = implode( ' AND ', $where );
+		$post_where_sql = implode( ' AND ', $post_where );
+		$arc_where_sql  = implode( ' AND ', $arc_where );
+
+		$post_select = "SELECT r.id, 'post' AS resource_type, r.post_id, r.post_title, r.post_type, r.post_update_time, r.risk_terms_found, r.risk_snippets, r.risk_terms_by_source, r.ignored_terms, r.scan_time, '' AS archive_url, '' AS taxonomy, 0 AS term_id FROM {$table_posts} r WHERE {$post_where_sql}";
+		$arc_select  = "SELECT a.id, 'archive' AS resource_type, 0 AS post_id, a.title AS post_title, a.taxonomy AS post_type, a.resource_update_time AS post_update_time, a.risk_terms_found, a.risk_snippets, a.risk_terms_by_source, a.ignored_terms, a.scan_time, a.archive_url, a.taxonomy, a.term_id FROM {$table_archives} a WHERE {$arc_where_sql}";
+
+		$parts  = array();
+		$params = array();
+		if ( 'archive' !== $resource ) {
+			$parts[] = $post_select;
+			$params  = array_merge( $params, $post_params );
+		}
+		if ( 'post' !== $resource ) {
+			$parts[] = $arc_select;
+			$params  = array_merge( $params, $arc_params );
+		}
+		if ( ! $parts ) {
+			return array(
+				'items'  => array(),
+				'total'  => 0,
+				'pages'  => 0,
+				'offset' => $offset,
+			);
+		}
+
+		$union_sql = implode( ' UNION ALL ', $parts );
 		if ( $params ) {
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-			$total = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE {$where_sql}", ...$params ) );
+			$total = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM ({$union_sql}) x", ...$params ) );
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			$items = $wpdb->get_results(
 				$wpdb->prepare(
-					"SELECT * FROM {$table} WHERE {$where_sql} ORDER BY scan_time DESC, id DESC LIMIT %d OFFSET %d",
+					"SELECT * FROM ({$union_sql}) x ORDER BY x.scan_time DESC, x.id DESC LIMIT %d OFFSET %d",
 					...array_merge( $params, array( $per_page, $offset ) )
 				)
 			);
 		} else {
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-			$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE {$where_sql}" );
+			$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM ({$union_sql}) x" );
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			$items = $wpdb->get_results(
 				$wpdb->prepare(
-					"SELECT * FROM {$table} WHERE {$where_sql} ORDER BY scan_time DESC, id DESC LIMIT %d OFFSET %d",
+					"SELECT * FROM ({$union_sql}) x ORDER BY x.scan_time DESC, x.id DESC LIMIT %d OFFSET %d",
 					$per_page,
 					$offset
 				)
@@ -636,23 +684,55 @@ class WPRS_Scanner {
 			delete_transient( $key );
 		}
 
-		$risk_count = self::count_with_risk();
-		self::write_log( 'full', __( '全局扫描', 'wp-risk-scanner' ), $total_posts, $risk_count, $duration_ms, $failed_posts, $last_error );
+		$risk_count          = self::count_with_risk();
+		$archives_scanned    = 0;
+		$archives_risk_count = 0;
+
+		// 文章批次完成后补扫归档（独立链路；可能较慢因需抓取前台页）。
+		try {
+			$archive_targets = WPRS_Archive_Scanner::collect_targets( false, '1970-01-01 00:00:00' );
+			if ( $archive_targets ) {
+				$archives_scanned = count( $archive_targets );
+				$archive_result   = WPRS_Archive_Scanner::scan_targets( $archive_targets );
+				$failed_posts    += (int) $archive_result['failed'];
+				if ( ! empty( $archive_result['last_error'] ) ) {
+					$last_error = (string) $archive_result['last_error'];
+				}
+			}
+		} catch ( Throwable $e ) {
+			$last_error = $e->getMessage();
+		}
+		$archives_risk_count = WPRS_Archive_Scanner::count_with_risk();
+
+		self::write_log(
+			'full',
+			__( '全局扫描', 'wp-risk-scanner' ),
+			$total_posts,
+			$risk_count,
+			$duration_ms,
+			$failed_posts,
+			$last_error,
+			$archives_scanned,
+			$archives_risk_count
+		);
 
 		if ( 0 === $failed_posts && '' === $last_error ) {
 			$terms_changed_at = (int) get_option( WPRS_Terms::OPTION_CHANGED_AT, 0 );
 			$t                = $terms_changed_at > 0 ? $terms_changed_at : (int) current_time( 'timestamp' );
 			update_option( self::OPTION_LAST_FULL_AT, $t, false );
+			update_option( self::OPTION_LAST_SCAN, current_time( 'mysql' ), false );
 			WPRS_Terms::clear_rescan_flag();
 		}
 
-		WPRS_Notifier::maybe_notify( $risk_count, $total_posts, false );
+		$total_violations = $risk_count + $archives_risk_count;
+		WPRS_Notifier::maybe_notify( $total_violations, $total_posts + $archives_scanned, false );
 
 		wp_send_json_success(
 			array(
-				'risk_count'   => $risk_count,
-				'failed_posts' => $failed_posts,
-				'duration_ms'  => $duration_ms,
+				'risk_count'          => $risk_count,
+				'archives_risk_count' => $archives_risk_count,
+				'failed_posts'        => $failed_posts,
+				'duration_ms'         => $duration_ms,
 			)
 		);
 	}
@@ -703,7 +783,7 @@ class WPRS_Scanner {
 	}
 
 	/**
-	 * 清空扫描结果（管理员）。
+	 * 清空扫描结果（管理员）。支持 target=posts|archives|all。
 	 *
 	 * @return void
 	 */
@@ -711,23 +791,43 @@ class WPRS_Scanner {
 		if ( ! current_user_can( WPRS_Settings::cap_sensitive() ) ) {
 			wp_die( esc_html__( '您没有权限执行此操作。', 'wp-risk-scanner' ) );
 		}
-		$nonce = isset( $_GET['nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['nonce'] ) ) : '';
+		$nonce = isset( $_REQUEST['nonce'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['nonce'] ) ) : '';
 		if ( ! wp_verify_nonce( $nonce, 'wprs_clear_scan_results' ) ) {
 			wp_die( esc_html__( '安全验证失败。', 'wp-risk-scanner' ) );
 		}
+		$target = isset( $_REQUEST['target'] ) ? sanitize_key( wp_unslash( $_REQUEST['target'] ) ) : 'all';
+		if ( ! in_array( $target, array( 'posts', 'archives', 'all' ), true ) ) {
+			$target = 'all';
+		}
+
 		global $wpdb;
-		$table = WPRS_Activator::table_results();
-		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$wpdb->query( "TRUNCATE TABLE {$table}" );
+		$table_posts    = WPRS_Activator::table_results();
+		$table_archives = WPRS_Activator::table_archives();
+		if ( 'posts' === $target ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->query( "TRUNCATE TABLE {$table_posts}" );
+			$message = __( '已清空文章扫描结果。', 'wp-risk-scanner' );
+		} elseif ( 'archives' === $target ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->query( "TRUNCATE TABLE {$table_archives}" );
+			$message = __( '已清空归档页扫描结果。', 'wp-risk-scanner' );
+		} else {
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->query( "TRUNCATE TABLE {$table_posts}" );
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->query( "TRUNCATE TABLE {$table_archives}" );
+			$message = __( '已统一清空文章与归档页扫描结果。', 'wp-risk-scanner' );
+		}
+
 		set_transient(
 			'wprs_scan_notice_' . get_current_user_id(),
 			array(
 				'type'    => 'success',
-				'message' => __( '已清空全部扫描结果。', 'wp-risk-scanner' ),
+				'message' => $message,
 			),
 			60
 		);
-		wp_safe_redirect( admin_url( 'admin.php?page=wprs-risk-scanner' ) );
+		wp_safe_redirect( admin_url( 'admin.php?page=wprs-risk-scanner&tab=results' ) );
 		exit;
 	}
 }

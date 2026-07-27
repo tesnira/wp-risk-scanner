@@ -26,8 +26,8 @@ class WPRS_Notifier {
 	/**
 	 * 构建最小固定 JSON 载荷。
 	 *
-	 * @param int                  $violations 违规文章数。
-	 * @param int                  $scanned    扫描篇数。
+	 * @param int                  $violations 违规数（文章+归档）。
+	 * @param int                  $scanned    扫描数。
 	 * @param array<string, mixed> $extra      附加字段。
 	 * @return array<string, mixed>
 	 */
@@ -38,13 +38,79 @@ class WPRS_Notifier {
 			'scanned'    => (int) $scanned,
 			'violations' => (int) $violations,
 			'time'       => gmdate( 'c' ),
-			'items'      => array(),
+			'items'      => self::collect_violation_items( 20 ),
 			'admin_url'  => admin_url( 'admin.php?page=wprs-risk-scanner' ),
 		);
 		if ( is_array( $extra ) ) {
 			$payload = array_merge( $payload, $extra );
 		}
 		return $payload;
+	}
+
+	/**
+	 * 收集违规摘要列表（文章 + 归档，按扫描时间倒序截断）。
+	 *
+	 * @param int $limit 最多条数。
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function collect_violation_items( $limit = 20 ) {
+		global $wpdb;
+		$limit          = max( 1, min( 50, (int) $limit ) );
+		$table_posts    = WPRS_Activator::table_results();
+		$table_archives = WPRS_Activator::table_archives();
+		$risk_sql       = "risk_terms_found IS NOT NULL AND risk_terms_found != '' AND risk_terms_found != '[]'";
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$union = "
+			SELECT * FROM (
+				SELECT 'post' AS resource_type, post_id AS object_id, post_title AS title, '' AS archive_url, '' AS taxonomy, 0 AS term_id, risk_terms_found, scan_time
+				FROM {$table_posts} WHERE {$risk_sql}
+				UNION ALL
+				SELECT 'archive' AS resource_type, term_id AS object_id, title AS title, archive_url, taxonomy, term_id, risk_terms_found, scan_time
+				FROM {$table_archives} WHERE {$risk_sql}
+			) x
+			ORDER BY x.scan_time DESC
+			LIMIT %d
+		";
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$rows = $wpdb->get_results( $wpdb->prepare( $union, $limit ) );
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$items = array();
+		foreach ( $rows as $row ) {
+			$terms = json_decode( (string) $row->risk_terms_found, true );
+			if ( ! is_array( $terms ) ) {
+				$terms = array();
+			}
+			$terms = array_values( array_filter( array_map( 'strval', $terms ) ) );
+
+			$is_archive = ( 'archive' === (string) $row->resource_type );
+			$url        = '';
+			if ( $is_archive ) {
+				$url = (string) $row->archive_url;
+				if ( '' === $url && ! empty( $row->taxonomy ) && (int) $row->term_id > 0 ) {
+					$link = get_term_link( (int) $row->term_id, (string) $row->taxonomy );
+					$url  = is_wp_error( $link ) ? '' : (string) $link;
+				}
+			} else {
+				$url = (string) get_permalink( (int) $row->object_id );
+			}
+
+			$item = array(
+				'type'  => $is_archive ? 'archive' : 'post',
+				'id'    => (int) $row->object_id,
+				'title' => (string) $row->title,
+				'url'   => $url,
+				'terms' => $terms,
+			);
+			if ( $is_archive ) {
+				$item['taxonomy'] = (string) $row->taxonomy;
+			}
+			$items[] = $item;
+		}
+		return $items;
 	}
 
 	/**
@@ -64,7 +130,16 @@ class WPRS_Notifier {
 			return false;
 		}
 
-		$payload = self::build_payload( $violations, $scanned );
+		$posts_risk    = WPRS_Scanner::count_with_risk();
+		$archives_risk = WPRS_Archive_Scanner::count_with_risk();
+		$payload       = self::build_payload(
+			(int) $violations,
+			$scanned,
+			array(
+				'posts_violations'    => $posts_risk,
+				'archives_violations' => $archives_risk,
+			)
+		);
 		$channel = $settings['notification_channel'];
 
 		if ( 'feishu' === $channel ) {
@@ -119,9 +194,18 @@ class WPRS_Notifier {
 			return new WP_Error( 'wprs_feishu_empty', __( '飞书 Webhook 为空。', 'wp-risk-scanner' ) );
 		}
 
-		$violations = (int) $payload['violations'];
-		$scan_time  = current_time( 'mysql' );
-		$scan_url   = admin_url( 'admin.php?page=wprs-risk-scanner' );
+		$violations      = (int) $payload['violations'];
+		$posts_risk      = isset( $payload['posts_violations'] ) ? (int) $payload['posts_violations'] : $violations;
+		$archives_risk   = isset( $payload['archives_violations'] ) ? (int) $payload['archives_violations'] : 0;
+		$scan_time       = current_time( 'mysql' );
+		$scan_url        = admin_url( 'admin.php?page=wprs-risk-scanner' );
+
+		$status_line = sprintf(
+			/* translators: 1: post count, 2: archive count */
+			__( '发现文章 **%1$d** 篇、归档页 **%2$d** 项包含违禁词，请及时核查与修正。', 'wp-risk-scanner' ),
+			$posts_risk,
+			$archives_risk
+		);
 
 		$body = array(
 			'msg_type' => 'interactive',
@@ -139,9 +223,9 @@ class WPRS_Notifier {
 						'text' => array(
 							'tag'     => 'lark_md',
 							'content' => sprintf(
-								"**扫描时间：** %s\n**违规状态：** 发现文章 **%d** 篇包含违禁词，请及时核查。",
+								"**扫描时间：** %s\n**违规状态：** %s",
 								$scan_time,
-								$violations
+								$status_line
 							),
 						),
 					),
@@ -201,15 +285,18 @@ class WPRS_Notifier {
 		}
 		check_ajax_referer( 'wprs_scan_ajax', 'nonce' );
 
-		$count  = WPRS_Scanner::count_with_risk();
-		$result = self::maybe_notify( max( 1, $count ), 0, true );
+		$count_posts     = WPRS_Scanner::count_with_risk();
+		$count_archives  = WPRS_Archive_Scanner::count_with_risk();
+		$total           = $count_posts + $count_archives;
+		$result          = self::maybe_notify( max( 1, $total ), 0, true );
 		if ( true === $result ) {
 			wp_send_json_success(
 				array(
 					'message' => sprintf(
-						/* translators: %d: violations */
-						__( '测试通知已发送（当前违规文章数：%d）。', 'wp-risk-scanner' ),
-						$count
+						/* translators: 1: post violations, 2: archive violations */
+						__( '测试通知已发送（当前违规：文章 %1$d，归档 %2$d）。', 'wp-risk-scanner' ),
+						$count_posts,
+						$count_archives
 					),
 				)
 			);

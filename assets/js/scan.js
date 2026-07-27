@@ -144,15 +144,29 @@
 	document.querySelectorAll('.wprs-term-action').forEach(function (btn) {
 		btn.addEventListener('click', function () {
 			var action = btn.getAttribute('data-action');
-			var postId = btn.getAttribute('data-post');
 			var term = btn.getAttribute('data-term');
-			if (!action || !postId || !term) {
+			var resource = btn.getAttribute('data-resource') || 'post';
+			if (!action || !term) {
 				return;
 			}
 			btn.disabled = true;
-			var ajaxAction =
-				action === 'unignore' ? 'wprs_scan_unignore_term' : 'wprs_scan_ignore_term';
-			post(ajaxAction, { post_id: postId, term: term })
+
+			var ajaxAction;
+			var payload = { term: term };
+			if (resource === 'archive') {
+				ajaxAction =
+					action === 'unignore'
+						? 'wprs_scan_unignore_archive_term'
+						: 'wprs_scan_ignore_archive_term';
+				payload.taxonomy = btn.getAttribute('data-taxonomy') || '';
+				payload.term_id = btn.getAttribute('data-term-id') || '';
+			} else {
+				ajaxAction =
+					action === 'unignore' ? 'wprs_scan_unignore_term' : 'wprs_scan_ignore_term';
+				payload.post_id = btn.getAttribute('data-post') || '';
+			}
+
+			post(ajaxAction, payload)
 				.then(function (r) {
 					if (r && r.success) {
 						window.location.reload();

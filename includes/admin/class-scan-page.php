@@ -82,13 +82,12 @@ class WPRS_Scan_Page {
 			delete_transient( 'wprs_scan_notice_' . get_current_user_id() );
 		}
 
-		$settings   = WPRS_Settings::get();
-		$clear_url  = wp_nonce_url(
-			admin_url( 'admin-post.php?action=wprs_clear_scan_results' ),
-			'wprs_clear_scan_results',
-			'nonce'
-		);
-		$base_url   = admin_url( 'admin.php?page=wprs-risk-scanner' );
+		$settings  = WPRS_Settings::get();
+		$clear_base = admin_url( 'admin-post.php?action=wprs_clear_scan_results' );
+		$clear_posts = wp_nonce_url( add_query_arg( 'target', 'posts', $clear_base ), 'wprs_clear_scan_results', 'nonce' );
+		$clear_archives = wp_nonce_url( add_query_arg( 'target', 'archives', $clear_base ), 'wprs_clear_scan_results', 'nonce' );
+		$clear_all = wp_nonce_url( add_query_arg( 'target', 'all', $clear_base ), 'wprs_clear_scan_results', 'nonce' );
+		$base_url  = admin_url( 'admin.php?page=wprs-risk-scanner' );
 		?>
 		<div class="wrap wprs-wrap">
 			<h1><?php esc_html_e( '风险扫描', 'wp-risk-scanner' ); ?></h1>
@@ -112,14 +111,28 @@ class WPRS_Scan_Page {
 					esc_html__( '当前扫描文章类型：%s（仅已发布）。可在「设置」中修改。', 'wp-risk-scanner' ),
 					esc_html( implode( ', ', $settings['scan_post_types'] ) )
 				);
+				if ( WPRS_Settings::is_archive_scan_enabled() && ! empty( $settings['archive_taxonomies'] ) ) {
+					echo ' ';
+					printf(
+						/* translators: %s: taxonomies */
+						esc_html__( '归档页 taxonomy：%s。', 'wp-risk-scanner' ),
+						esc_html( implode( ', ', $settings['archive_taxonomies'] ) )
+					);
+				}
 				?>
 			</p>
 
 			<div class="wprs-scan-toolbar">
 				<button type="button" class="button button-primary" id="wprs-scan-run"><?php esc_html_e( '全站重新扫描', 'wp-risk-scanner' ); ?></button>
 				<?php if ( current_user_can( WPRS_Settings::cap_sensitive() ) ) : ?>
-					<a class="button" href="<?php echo esc_url( $clear_url ); ?>" onclick="return confirm('<?php echo esc_js( __( '确定清空全部扫描结果吗？', 'wp-risk-scanner' ) ); ?>');">
-						<?php esc_html_e( '清空结果', 'wp-risk-scanner' ); ?>
+					<a class="button" href="<?php echo esc_url( $clear_posts ); ?>" onclick="return confirm('<?php echo esc_js( __( '确定清空文章扫描结果吗？', 'wp-risk-scanner' ) ); ?>');">
+						<?php esc_html_e( '清空文章扫描', 'wp-risk-scanner' ); ?>
+					</a>
+					<a class="button" href="<?php echo esc_url( $clear_archives ); ?>" onclick="return confirm('<?php echo esc_js( __( '确定清空归档页扫描结果吗？', 'wp-risk-scanner' ) ); ?>');">
+						<?php esc_html_e( '清空归档页扫描', 'wp-risk-scanner' ); ?>
+					</a>
+					<a class="button" href="<?php echo esc_url( $clear_all ); ?>" onclick="return confirm('<?php echo esc_js( __( '确定统一清空文章与归档页扫描结果吗？', 'wp-risk-scanner' ) ); ?>');" style="border-color:#d63638;color:#b32d2e;">
+						<?php esc_html_e( '统一清空扫描', 'wp-risk-scanner' ); ?>
 					</a>
 				<?php endif; ?>
 			</div>
@@ -155,11 +168,12 @@ class WPRS_Scan_Page {
 	 * @return void
 	 */
 	private static function render_results() {
-		$status      = isset( $_GET['status'] ) ? sanitize_key( wp_unslash( $_GET['status'] ) ) : 'risk';
-		$post_type   = isset( $_GET['post_type'] ) ? sanitize_key( wp_unslash( $_GET['post_type'] ) ) : '';
-		$search      = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
-		$search_type = isset( $_GET['search_type'] ) ? sanitize_key( wp_unslash( $_GET['search_type'] ) ) : 'title';
-		$paged       = isset( $_GET['paged'] ) ? max( 1, (int) $_GET['paged'] ) : 1;
+		$status        = isset( $_GET['status'] ) ? sanitize_key( wp_unslash( $_GET['status'] ) ) : 'risk';
+		$post_type     = isset( $_GET['post_type'] ) ? sanitize_key( wp_unslash( $_GET['post_type'] ) ) : '';
+		$search        = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
+		$search_type   = isset( $_GET['search_type'] ) ? sanitize_key( wp_unslash( $_GET['search_type'] ) ) : 'title';
+		$resource_type = isset( $_GET['resource_type'] ) ? sanitize_key( wp_unslash( $_GET['resource_type'] ) ) : 'all';
+		$paged         = isset( $_GET['paged'] ) ? max( 1, (int) $_GET['paged'] ) : 1;
 
 		if ( 'compliant' === $status ) {
 			$status = 'clean';
@@ -170,16 +184,20 @@ class WPRS_Scan_Page {
 		if ( ! in_array( $search_type, array( 'title', 'risk_term' ), true ) ) {
 			$search_type = 'title';
 		}
+		if ( ! in_array( $resource_type, array( 'post', 'archive', 'all' ), true ) ) {
+			$resource_type = 'all';
+		}
 
 		$per_page = 20;
 		$result   = WPRS_Scanner::query_results(
 			array(
-				'status'      => $status,
-				'post_type'   => $post_type,
-				's'           => $search,
-				'search_type' => $search_type,
-				'paged'       => $paged,
-				'per_page'    => $per_page,
+				'status'        => $status,
+				'post_type'     => $post_type,
+				's'             => $search,
+				'search_type'   => $search_type,
+				'resource_type' => $resource_type,
+				'paged'         => $paged,
+				'per_page'      => $per_page,
 			)
 		);
 		$items  = $result['items'];
@@ -187,6 +205,8 @@ class WPRS_Scan_Page {
 		$pages  = $result['pages'];
 		$offset = isset( $result['offset'] ) ? (int) $result['offset'] : ( ( $paged - 1 ) * $per_page );
 		$types  = WPRS_Scanner::eligible_post_types();
+		$taxes  = WPRS_Settings::get()['archive_taxonomies'];
+		$type_options = array_values( array_unique( array_merge( $types, is_array( $taxes ) ? $taxes : array() ) ) );
 
 		$empty_text = __( '暂无扫描记录。', 'wp-risk-scanner' );
 		if ( 'risk' === $status ) {
@@ -207,9 +227,14 @@ class WPRS_Scan_Page {
 
 			<div class="tablenav top wprs-results-tablenav">
 				<div class="alignleft actions">
+					<select name="resource_type">
+						<option value="post" <?php selected( $resource_type, 'post' ); ?>><?php esc_html_e( '文章扫描', 'wp-risk-scanner' ); ?></option>
+						<option value="archive" <?php selected( $resource_type, 'archive' ); ?>><?php esc_html_e( '归档页扫描', 'wp-risk-scanner' ); ?></option>
+						<option value="all" <?php selected( $resource_type, 'all' ); ?>><?php esc_html_e( '所有类型扫描', 'wp-risk-scanner' ); ?></option>
+					</select>
 					<select name="post_type">
 						<option value=""><?php esc_html_e( '-- 所有类型 --', 'wp-risk-scanner' ); ?></option>
-						<?php foreach ( $types as $pt ) : ?>
+						<?php foreach ( $type_options as $pt ) : ?>
 							<option value="<?php echo esc_attr( $pt ); ?>" <?php selected( $post_type, $pt ); ?>><?php echo esc_html( $pt ); ?></option>
 						<?php endforeach; ?>
 					</select>
@@ -256,7 +281,7 @@ class WPRS_Scan_Page {
 					</th>
 					<th><?php esc_html_e( '最新修改时间', 'wp-risk-scanner' ); ?></th>
 					<th><?php esc_html_e( '扫描时间', 'wp-risk-scanner' ); ?></th>
-					<th style="width:80px;"><?php esc_html_e( '操作', 'wp-risk-scanner' ); ?></th>
+					<th style="width:90px;"><?php esc_html_e( '操作', 'wp-risk-scanner' ); ?></th>
 				</tr>
 			</thead>
 			<tbody>
@@ -266,10 +291,13 @@ class WPRS_Scan_Page {
 					<?php
 					$index = $offset + 1;
 					foreach ( $items as $row ) :
-						$post_id = (int) $row->post_id;
-						$found   = json_decode( (string) $row->risk_terms_found, true );
-						$by_src  = json_decode( (string) $row->risk_terms_by_source, true );
-						$snips   = json_decode( (string) $row->risk_snippets, true );
+						$is_archive = isset( $row->resource_type ) && 'archive' === $row->resource_type;
+						$post_id    = (int) $row->post_id;
+						$taxonomy   = isset( $row->taxonomy ) ? (string) $row->taxonomy : '';
+						$term_id    = isset( $row->term_id ) ? (int) $row->term_id : 0;
+						$found      = json_decode( (string) $row->risk_terms_found, true );
+						$by_src     = json_decode( (string) $row->risk_terms_by_source, true );
+						$snips      = json_decode( (string) $row->risk_snippets, true );
 						if ( ! is_array( $found ) ) {
 							$found = array();
 						}
@@ -280,23 +308,33 @@ class WPRS_Scan_Page {
 							$snips = array();
 						}
 
-						$author_id   = (int) get_post_field( 'post_author', $post_id );
-						$author_name = $author_id ? (string) get_the_author_meta( 'display_name', $author_id ) : '';
-						if ( '' === $author_name ) {
-							$author_name = __( '未知', 'wp-risk-scanner' );
+						if ( $is_archive ) {
+							$author_name  = '-';
+							$status_label = __( '已发布', 'wp-risk-scanner' );
+							$view_url     = ! empty( $row->archive_url ) ? (string) $row->archive_url : '';
+							$edit_url     = ( $taxonomy && $term_id ) ? get_edit_term_link( $term_id, $taxonomy ) : '';
+							$whitelist    = WPRS_Archive_Scanner::get_term_whitelist( $term_id );
+							$history      = json_decode( (string) $row->ignored_terms, true );
+							if ( is_array( $history ) ) {
+								$whitelist = array_values( array_unique( array_merge( $whitelist, array_filter( array_map( 'trim', $history ) ) ) ) );
+							}
+						} else {
+							$author_id   = (int) get_post_field( 'post_author', $post_id );
+							$author_name = $author_id ? (string) get_the_author_meta( 'display_name', $author_id ) : '';
+							if ( '' === $author_name ) {
+								$author_name = __( '未知', 'wp-risk-scanner' );
+							}
+							$post_status = (string) get_post_status( $post_id );
+							if ( '' === $post_status ) {
+								$post_status = (string) get_post_field( 'post_status', $post_id );
+							}
+							$status_label = isset( $status_label_map[ $post_status ] ) ? $status_label_map[ $post_status ] : ( $post_status ? $post_status : '-' );
+							$view_url     = get_permalink( $post_id );
+							$edit_url     = get_edit_post_link( $post_id );
+							$whitelist    = self::collect_row_whitelist( $post_id, $row );
 						}
-
-						$post_status = (string) get_post_status( $post_id );
-						if ( '' === $post_status ) {
-							$post_status = (string) get_post_field( 'post_status', $post_id );
-						}
-						$status_label = isset( $status_label_map[ $post_status ] ) ? $status_label_map[ $post_status ] : ( $post_status ? $post_status : '-' );
-
-						$view_url = get_permalink( $post_id );
-						$edit_url = get_edit_post_link( $post_id );
-						$whitelist = self::collect_row_whitelist( $post_id, $row );
 						?>
-						<tr id="wprs-result-row-<?php echo (int) $row->id; ?>">
+						<tr id="wprs-result-row-<?php echo esc_attr( ( $is_archive ? 'a' : 'p' ) . '-' . (int) $row->id ); ?>">
 							<td><?php echo (int) $index++; ?></td>
 							<td>
 								<?php if ( $view_url ) : ?>
@@ -308,20 +346,20 @@ class WPRS_Scan_Page {
 								<span class="wprs-row-meta">
 									Type: <?php echo esc_html( (string) $row->post_type ); ?>
 									/ Status: <?php echo esc_html( $status_label ); ?>
-									/ Resource: <?php esc_html_e( '文章扫描', 'wp-risk-scanner' ); ?>
+									/ Resource: <?php echo $is_archive ? esc_html__( '归档页扫描', 'wp-risk-scanner' ) : esc_html__( '文章扫描', 'wp-risk-scanner' ); ?>
 								</span>
 							</td>
 							<td><?php echo esc_html( $author_name ); ?></td>
 							<td class="wprs-whitelist-cell">
 								<?php
-								// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- 内部已 esc_html/esc_attr。
-								echo self::format_whitelist_cell( $whitelist, $post_id );
+								// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+								echo self::format_whitelist_cell( $whitelist, $post_id, $is_archive, $taxonomy, $term_id );
 								?>
 							</td>
 							<td class="wprs-terms-cell">
 								<?php
-								// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- 内部已 esc_html/esc_attr。
-								echo self::format_terms_by_source( $by_src, $found, $post_id );
+								// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+								echo self::format_terms_by_source( $by_src, $found, $post_id, $is_archive, $taxonomy, $term_id );
 								?>
 							</td>
 							<td class="wprs-snip-cell">
@@ -337,8 +375,8 @@ class WPRS_Scan_Page {
 													echo wp_kses(
 														$snips[ $term ],
 														array(
-															'mark' => array( 'class' => true, 'style' => true ),
-															'br'   => array(),
+															'mark'   => array( 'class' => true, 'style' => true ),
+															'br'     => array(),
 															'strong' => array(),
 														)
 													);
@@ -354,7 +392,9 @@ class WPRS_Scan_Page {
 							<td><?php echo esc_html( (string) $row->post_update_time ); ?></td>
 							<td><?php echo esc_html( (string) $row->scan_time ); ?></td>
 							<td>
-								<?php if ( $edit_url ) : ?>
+								<?php if ( $is_archive && $view_url ) : ?>
+									<a href="<?php echo esc_url( $view_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-small"><?php esc_html_e( '查看归档页', 'wp-risk-scanner' ); ?></a>
+								<?php elseif ( $edit_url ) : ?>
 									<a href="<?php echo esc_url( $edit_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-small"><?php esc_html_e( '去修改', 'wp-risk-scanner' ); ?></a>
 								<?php else : ?>
 									<span class="wprs-empty">-</span>
@@ -375,13 +415,14 @@ class WPRS_Scan_Page {
 							array(
 								'base'    => add_query_arg(
 									array(
-										'page'        => 'wprs-risk-scanner',
-										'tab'         => 'results',
-										'status'      => $status,
-										'post_type'   => $post_type,
-										'search_type' => $search_type,
-										's'           => $search,
-										'paged'       => '%#%',
+										'page'          => 'wprs-risk-scanner',
+										'tab'           => 'results',
+										'status'        => $status,
+										'post_type'     => $post_type,
+										'resource_type' => $resource_type,
+										'search_type'   => $search_type,
+										's'             => $search,
+										'paged'         => '%#%',
 									),
 									admin_url( 'admin.php' )
 								),
@@ -436,26 +477,32 @@ class WPRS_Scan_Page {
 	/**
 	 * 白名单列 HTML。
 	 *
-	 * @param string[] $terms   白名单词。
-	 * @param int      $post_id 文章 ID。
+	 * @param string[] $terms      白名单词。
+	 * @param int      $post_id    文章 ID。
+	 * @param bool     $is_archive 是否归档。
+	 * @param string   $taxonomy   Taxonomy。
+	 * @param int      $term_id    Term ID。
 	 * @return string
 	 */
-	private static function format_whitelist_cell( $terms, $post_id ) {
+	private static function format_whitelist_cell( $terms, $post_id, $is_archive = false, $taxonomy = '', $term_id = 0 ) {
 		if ( ! $terms ) {
 			return '<span class="wprs-empty">- ' . esc_html__( '无', 'wp-risk-scanner' ) . ' -</span>';
 		}
-		return self::term_rows( $terms, $post_id, 'unignore' );
+		return self::term_rows( $terms, $post_id, 'unignore', $is_archive, $taxonomy, $term_id );
 	}
 
 	/**
 	 * 按来源格式化违禁词，并附忽略按钮。
 	 *
-	 * @param array<string, mixed> $by_src  来源分组。
-	 * @param string[]             $found   命中词。
-	 * @param int                  $post_id 文章 ID。
+	 * @param array<string, mixed> $by_src     来源分组。
+	 * @param string[]             $found      命中词。
+	 * @param int                  $post_id    文章 ID。
+	 * @param bool                 $is_archive 是否归档。
+	 * @param string               $taxonomy   Taxonomy。
+	 * @param int                  $term_id    Term ID。
 	 * @return string
 	 */
-	private static function format_terms_by_source( $by_src, $found, $post_id ) {
+	private static function format_terms_by_source( $by_src, $found, $post_id, $is_archive = false, $taxonomy = '', $term_id = 0 ) {
 		if ( ! $found ) {
 			return '<span class="wprs-empty">- ' . esc_html__( '无', 'wp-risk-scanner' ) . ' -</span>';
 		}
@@ -483,21 +530,21 @@ class WPRS_Scan_Page {
 
 			if ( $article_ts ) {
 				$html .= '<div class="wprs-src-group"><span class="wprs-src-label">' . esc_html__( '【文章内容】', 'wp-risk-scanner' ) . '</span>';
-				$html .= self::term_rows( $article_ts, $post_id, 'ignore' );
+				$html .= self::term_rows( $article_ts, $post_id, 'ignore', $is_archive, $taxonomy, $term_id );
 				$html .= '</div>';
 			}
 			if ( $yoast_ts ) {
 				$html .= '<div class="wprs-src-group"><span class="wprs-src-label">' . esc_html__( '【Yoast内容】', 'wp-risk-scanner' ) . '</span>';
-				$html .= self::term_rows( $yoast_ts, $post_id, 'ignore' );
+				$html .= self::term_rows( $yoast_ts, $post_id, 'ignore', $is_archive, $taxonomy, $term_id );
 				$html .= '</div>';
 			}
 			if ( $orphan ) {
 				$html .= '<div class="wprs-src-group"><span class="wprs-src-label">' . esc_html__( '【未分类】', 'wp-risk-scanner' ) . '</span>';
-				$html .= self::term_rows( $orphan, $post_id, 'ignore' );
+				$html .= self::term_rows( $orphan, $post_id, 'ignore', $is_archive, $taxonomy, $term_id );
 				$html .= '</div>';
 			}
 		} else {
-			$html .= self::term_rows( $found, $post_id, 'ignore' );
+			$html .= self::term_rows( $found, $post_id, 'ignore', $is_archive, $taxonomy, $term_id );
 			$html .= '<p class="wprs-src-hint">' . esc_html__( '提示：未记录来源细分时，将违禁词列在同一组；执行一次全站重新扫描后可区分【文章内容】与【Yoast内容】。', 'wp-risk-scanner' ) . '</p>';
 		}
 
@@ -507,12 +554,15 @@ class WPRS_Scan_Page {
 	/**
 	 * 词行 HTML（徽章 + 操作链接，对齐主题列表样式）。
 	 *
-	 * @param string[] $terms   词列表。
-	 * @param int      $post_id 文章 ID。
-	 * @param string   $action  ignore|unignore。
+	 * @param string[] $terms      词列表。
+	 * @param int      $post_id    文章 ID。
+	 * @param string   $action     ignore|unignore。
+	 * @param bool     $is_archive 是否归档。
+	 * @param string   $taxonomy   Taxonomy。
+	 * @param int      $term_id    Term ID。
 	 * @return string
 	 */
-	private static function term_rows( $terms, $post_id, $action ) {
+	private static function term_rows( $terms, $post_id, $action, $is_archive = false, $taxonomy = '', $term_id = 0 ) {
 		$out = array();
 		foreach ( $terms as $term ) {
 			$term = (string) $term;
@@ -525,16 +575,30 @@ class WPRS_Scan_Page {
 				: __( '忽略/不处理', 'wp-risk-scanner' );
 			$link_class  = ( 'unignore' === $action ) ? 'wprs-term-action wprs-term-action--unignore' : 'wprs-term-action wprs-term-action--ignore';
 
-			$out[] = sprintf(
-				'<div class="wprs-term-row"><span class="%1$s">%2$s</span> <button type="button" class="button-link %3$s" data-action="%4$s" data-post="%5$d" data-term="%6$s">%7$s</button></div>',
-				esc_attr( $badge_class ),
-				esc_html( $term ),
-				esc_attr( $link_class ),
-				esc_attr( $action ),
-				(int) $post_id,
-				esc_attr( $term ),
-				esc_html( $label )
-			);
+			if ( $is_archive ) {
+				$out[] = sprintf(
+					'<div class="wprs-term-row"><span class="%1$s">%2$s</span> <button type="button" class="button-link %3$s" data-action="%4$s" data-resource="archive" data-taxonomy="%5$s" data-term-id="%6$d" data-term="%7$s">%8$s</button></div>',
+					esc_attr( $badge_class ),
+					esc_html( $term ),
+					esc_attr( $link_class ),
+					esc_attr( $action ),
+					esc_attr( $taxonomy ),
+					(int) $term_id,
+					esc_attr( $term ),
+					esc_html( $label )
+				);
+			} else {
+				$out[] = sprintf(
+					'<div class="wprs-term-row"><span class="%1$s">%2$s</span> <button type="button" class="button-link %3$s" data-action="%4$s" data-resource="post" data-post="%5$d" data-term="%6$s">%7$s</button></div>',
+					esc_attr( $badge_class ),
+					esc_html( $term ),
+					esc_attr( $link_class ),
+					esc_attr( $action ),
+					(int) $post_id,
+					esc_attr( $term ),
+					esc_html( $label )
+				);
+			}
 		}
 		return implode( '', $out );
 	}
@@ -555,7 +619,9 @@ class WPRS_Scan_Page {
 					<th><?php esc_html_e( '类型', 'wp-risk-scanner' ); ?></th>
 					<th><?php esc_html_e( '操作人', 'wp-risk-scanner' ); ?></th>
 					<th><?php esc_html_e( '扫描篇数', 'wp-risk-scanner' ); ?></th>
-					<th><?php esc_html_e( '风险数', 'wp-risk-scanner' ); ?></th>
+					<th><?php esc_html_e( '文章风险', 'wp-risk-scanner' ); ?></th>
+					<th><?php esc_html_e( '归档扫描', 'wp-risk-scanner' ); ?></th>
+					<th><?php esc_html_e( '归档风险', 'wp-risk-scanner' ); ?></th>
 					<th><?php esc_html_e( '耗时(ms)', 'wp-risk-scanner' ); ?></th>
 					<th><?php esc_html_e( '失败', 'wp-risk-scanner' ); ?></th>
 					<th><?php esc_html_e( '错误', 'wp-risk-scanner' ); ?></th>
@@ -563,7 +629,7 @@ class WPRS_Scan_Page {
 			</thead>
 			<tbody>
 				<?php if ( ! $logs ) : ?>
-					<tr><td colspan="8"><?php esc_html_e( '暂无日志。', 'wp-risk-scanner' ); ?></td></tr>
+					<tr><td colspan="10"><?php esc_html_e( '暂无日志。', 'wp-risk-scanner' ); ?></td></tr>
 				<?php else : ?>
 					<?php foreach ( $logs as $log ) : ?>
 						<tr>
@@ -572,6 +638,8 @@ class WPRS_Scan_Page {
 							<td><?php echo esc_html( (string) $log->operator ); ?></td>
 							<td><?php echo (int) $log->posts_scanned; ?></td>
 							<td><?php echo (int) $log->risk_count; ?></td>
+							<td><?php echo (int) $log->archives_scanned; ?></td>
+							<td><?php echo (int) $log->archives_risk_count; ?></td>
 							<td><?php echo (int) $log->execution_time_ms; ?></td>
 							<td><?php echo (int) $log->failed_posts; ?></td>
 							<td><?php echo esc_html( (string) $log->last_error ); ?></td>

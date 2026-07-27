@@ -71,7 +71,7 @@ class WPRS_Settings {
 		}
 		$settings = array_merge( self::defaults(), $stored );
 		$settings['scan_post_types']    = self::sanitize_post_types( $settings['scan_post_types'] );
-		$settings['archive_taxonomies'] = self::sanitize_string_list( $settings['archive_taxonomies'] );
+		$settings['archive_taxonomies'] = self::sanitize_taxonomies( $settings['archive_taxonomies'] );
 		$settings['cron_times']         = self::sanitize_cron_times( $settings['cron_times'] );
 		$settings['cron_mode']          = in_array( $settings['cron_mode'], array( 'wp_cron', 'system' ), true )
 			? $settings['cron_mode']
@@ -96,7 +96,7 @@ class WPRS_Settings {
 			'scan_post_types'          => self::sanitize_post_types(
 				isset( $input['scan_post_types'] ) ? $input['scan_post_types'] : array( 'post', 'page' )
 			),
-			'archive_taxonomies'       => self::sanitize_string_list(
+			'archive_taxonomies'       => self::sanitize_taxonomies(
 				isset( $input['archive_taxonomies'] ) ? $input['archive_taxonomies'] : array()
 			),
 			'cron_mode'                => ( isset( $input['cron_mode'] ) && 'system' === $input['cron_mode'] )
@@ -197,6 +197,23 @@ class WPRS_Settings {
 			}
 		}
 		return array_values( array_unique( $clean ) );
+	}
+
+	/**
+	 * 清洗 taxonomy slug 列表（仅保留已注册）。
+	 *
+	 * @param mixed $list 原始值。
+	 * @return string[]
+	 */
+	public static function sanitize_taxonomies( $list ) {
+		$list = self::sanitize_string_list( $list );
+		$out  = array();
+		foreach ( $list as $tax ) {
+			if ( taxonomy_exists( $tax ) ) {
+				$out[] = $tax;
+			}
+		}
+		return array_values( array_unique( $out ) );
 	}
 
 	/**

@@ -138,8 +138,35 @@ class WPRS_Settings_Page {
 						<td>
 							<label>
 								<input type="checkbox" name="wprs_settings[enable_archive_scan]" value="1" <?php checked( ! empty( $settings['enable_archive_scan'] ) ); ?> />
-								<?php esc_html_e( '扫描已配置 taxonomy 的归档页（实现阶段完善配置项）', 'wp-risk-scanner' ); ?>
+								<?php esc_html_e( '扫描下方勾选的 taxonomy 归档页（term 名称/描述/meta + 前台整页可见文本 + Yoast term SEO）', 'wp-risk-scanner' ); ?>
 							</label>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( '归档页 Taxonomy', 'wp-risk-scanner' ); ?></th>
+						<td>
+							<fieldset>
+								<?php
+								$selectable = WPRS_Archive_Scanner::selectable_taxonomies();
+								$selected   = isset( $settings['archive_taxonomies'] ) ? (array) $settings['archive_taxonomies'] : array();
+								if ( ! $selectable ) :
+									?>
+									<p class="description"><?php esc_html_e( '当前站点没有可用的公开 taxonomy。', 'wp-risk-scanner' ); ?></p>
+								<?php else : ?>
+									<?php foreach ( $selectable as $tax ) : ?>
+										<label style="display:inline-block;margin:0 1rem 0.5rem 0;">
+											<input
+												type="checkbox"
+												name="wprs_settings[archive_taxonomies][]"
+												value="<?php echo esc_attr( $tax->name ); ?>"
+												<?php checked( in_array( $tax->name, $selected, true ) ); ?>
+											/>
+											<?php echo esc_html( $tax->labels->singular_name . ' (' . $tax->name . ')' ); ?>
+										</label>
+									<?php endforeach; ?>
+								<?php endif; ?>
+							</fieldset>
+							<p class="description"><?php esc_html_e( '需同时开启「启用归档页扫描」才会执行。未勾选任何项时不扫归档。', 'wp-risk-scanner' ); ?></p>
 						</td>
 					</tr>
 					<tr>

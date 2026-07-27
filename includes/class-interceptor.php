@@ -22,6 +22,11 @@ class WPRS_Interceptor {
 	 * @return void
 	 */
 	public function register() {
+		// 保存成功后延迟单篇重扫：与拦截开关无关，保证风险列表及时更新。
+		add_action( 'save_post', array( $this, 'on_save_post_schedule_scan' ), 99, 2 );
+		add_action( 'elementor/document/after_save', array( $this, 'on_elementor_after_save_schedule' ), 20, 1 );
+		add_action( 'rest_api_init', array( $this, 'register_rest_schedule_hooks' ), 6 );
+
 		if ( ! WPRS_Settings::is_intercept_enabled() ) {
 			return;
 		}
@@ -38,6 +43,138 @@ class WPRS_Interceptor {
 		add_action( 'added_post_meta', array( $this, 'on_meta_updated' ), 10, 4 );
 		add_action( 'rest_api_init', array( $this, 'register_rest_after_insert_sync' ), 5 );
 		add_action( 'elementor/editor/before_enqueue_scripts', array( $this, 'seed_elementor_whitelist_from_native' ) );
+		add_action( 'elementor/editor/after_enqueue_scripts', array( $this, 'suppress_elementor_known_rejection' ), 20 );
+	}
+
+	/**
+	 * 压制 Elementor 拦截时控制台的已知 unhandledrejection（不影响 toast）。
+	 *
+	 * @return void
+	 */
+	public function suppress_elementor_known_rejection() {
+		$handle = 'elementor-editor';
+		if ( ! wp_script_is( $handle, 'registered' ) ) {
+			return;
+		}
+		$js = <<<'JSEOF'
+(function(){
+	if(typeof window==='undefined'||!window.addEventListener)return;
+	window.addEventListener('unhandledrejection',function(event){
+		try{
+			var r=event&&event.reason;
+			var msg='';
+			if(typeof r==='string'){msg=r;}
+			else if(r&&typeof r.message==='string'){msg=r.message;}
+			if(!msg)return;
+			if(msg.indexOf('保存失败：')!==-1&&msg.indexOf('本文违禁词白名单')!==-1){
+				event.preventDefault();
+			}
+		}catch(e){}
+	});
+})();
+JSEOF;
+		wp_add_inline_script( $handle, $js, 'after' );
+	}
+
+	/**
+	 * REST 保存后调度单篇扫描。
+	 *
+	 * @return void
+	 */
+	public function register_rest_schedule_hooks() {
+		foreach ( $this->rest_post_types() as $pt ) {
+			add_action( "rest_after_insert_{$pt}", array( $this, 'rest_after_insert_schedule_scan' ), 20, 3 );
+		}
+	}
+
+	/**
+	 * REST 保存结束后调度扫描。
+	 *
+	 * @param WP_Post         $post     文章。
+	 * @param WP_REST_Request $request  请求。
+	 * @param bool            $creating 是否新建。
+	 * @return void
+	 */
+	public function rest_after_insert_schedule_scan( $post, $request, $creating ) {
+		unset( $request, $creating );
+		if ( $post instanceof WP_Post ) {
+			self::schedule_single_scan( (int) $post->ID );
+		}
+	}
+
+	/**
+	 * save_post 调度扫描。
+	 *
+	 * @param int     $post_id 文章 ID。
+	 * @param WP_Post $post    文章对象。
+	 * @return void
+	 */
+	public function on_save_post_schedule_scan( $post_id, $post ) {
+		if ( ! $post instanceof WP_Post ) {
+			return;
+		}
+		if ( ! in_array( $post->post_type, WPRS_Scanner::eligible_post_types(), true ) ) {
+			return;
+		}
+		self::schedule_single_scan( (int) $post_id );
+	}
+
+	/**
+	 * Elementor 保存后调度扫描。
+	 *
+	 * @param mixed $document 文档。
+	 * @return void
+	 */
+	public function on_elementor_after_save_schedule( $document ) {
+		if ( $document && method_exists( $document, 'get_main_id' ) ) {
+			self::schedule_single_scan( (int) $document->get_main_id() );
+		}
+	}
+
+	/**
+	 * 延迟到 shutdown 再扫单篇（确保 meta 已落库；仅 publish）。
+	 *
+	 * @param int $post_id 文章 ID。
+	 * @return void
+	 */
+	public static function schedule_single_scan( $post_id ) {
+		$post_id = (int) $post_id;
+		if ( $post_id <= 0 ) {
+			return;
+		}
+		if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+			return;
+		}
+		if ( wp_is_post_revision( $post_id ) ) {
+			return;
+		}
+		if ( 'elementor_library' === get_post_type( $post_id ) ) {
+			return;
+		}
+
+		static $queued = array();
+		static $hooked = false;
+		$queued[ $post_id ] = $post_id;
+
+		if ( $hooked ) {
+			return;
+		}
+		$hooked = true;
+		add_action(
+			'shutdown',
+			static function () use ( &$queued ) {
+				$ids = array_values( array_unique( array_map( 'intval', $queued ) ) );
+				$publish_ids = array();
+				foreach ( $ids as $id ) {
+					if ( 'publish' === get_post_status( $id ) && in_array( get_post_type( $id ), WPRS_Scanner::eligible_post_types(), true ) ) {
+						$publish_ids[] = $id;
+					}
+				}
+				if ( $publish_ids ) {
+					WPRS_Scanner::scan_posts( $publish_ids );
+				}
+			}
+		);
 	}
 
 	/**

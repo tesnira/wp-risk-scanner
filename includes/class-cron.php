@@ -210,8 +210,23 @@ class WPRS_Cron {
 		$post_ids = array_map( 'intval', is_array( $post_ids ) ? $post_ids : array() );
 
 		$result   = WPRS_Scanner::scan_posts( $post_ids );
-		$duration = (int) round( ( microtime( true ) - $started ) * 1000 );
-		$risk     = WPRS_Scanner::count_with_risk();
+		$failed   = (int) $result['failed_posts'];
+		$error    = (string) $result['last_error'];
+
+		$archives_scanned = 0;
+		$archive_targets  = WPRS_Archive_Scanner::collect_targets( ! $force_full, $last_scan );
+		if ( $archive_targets ) {
+			$archives_scanned = count( $archive_targets );
+			$archive_result   = WPRS_Archive_Scanner::scan_targets( $archive_targets );
+			$failed          += (int) $archive_result['failed'];
+			if ( ! empty( $archive_result['last_error'] ) ) {
+				$error = (string) $archive_result['last_error'];
+			}
+		}
+
+		$duration            = (int) round( ( microtime( true ) - $started ) * 1000 );
+		$risk                = WPRS_Scanner::count_with_risk();
+		$archives_risk_count = WPRS_Archive_Scanner::count_with_risk();
 
 		update_option( WPRS_Scanner::OPTION_LAST_SCAN, current_time( 'mysql' ), false );
 		update_option( self::OPTION_LAST_SUCCESS, current_time( 'timestamp' ), false );
@@ -222,23 +237,27 @@ class WPRS_Cron {
 			count( $post_ids ),
 			$risk,
 			$duration,
-			(int) $result['failed_posts'],
-			(string) $result['last_error']
+			$failed,
+			$error,
+			$archives_scanned,
+			$archives_risk_count
 		);
 
-		if ( $force_full && 0 === (int) $result['failed_posts'] ) {
+		if ( $force_full && 0 === $failed ) {
 			$terms_changed_at = (int) get_option( WPRS_Terms::OPTION_CHANGED_AT, 0 );
 			$t                = $terms_changed_at > 0 ? $terms_changed_at : (int) current_time( 'timestamp' );
 			update_option( WPRS_Scanner::OPTION_LAST_FULL_AT, $t, false );
 			WPRS_Terms::clear_rescan_flag();
 		}
 
-		WPRS_Notifier::maybe_notify( $risk, count( $post_ids ), false );
+		WPRS_Notifier::maybe_notify( $risk + $archives_risk_count, count( $post_ids ) + $archives_scanned, false );
 
 		return array(
-			'scanned' => count( $post_ids ),
-			'risk'    => $risk,
-			'result'  => $result,
+			'scanned'          => count( $post_ids ),
+			'archives_scanned' => $archives_scanned,
+			'risk'             => $risk,
+			'archives_risk'    => $archives_risk_count,
+			'result'           => $result,
 		);
 	}
 

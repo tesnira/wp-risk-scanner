@@ -25,12 +25,14 @@ class WPRS_Plugin {
 
 		$admin        = new WPRS_Admin();
 		$scanner      = new WPRS_Scanner();
+		$archives     = new WPRS_Archive_Scanner();
 		$interceptor  = new WPRS_Interceptor();
 		$notifier     = new WPRS_Notifier();
 		$cron         = new WPRS_Cron();
 
 		$admin->register();
 		$scanner->register();
+		$archives->register();
 		$interceptor->register();
 		$notifier->register();
 		$cron->register();
