@@ -117,6 +117,110 @@
 	margin: 1em 0;
 }
 
+.wprs-results-tablenav {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin: 1em 0 0.5em;
+	height: auto;
+	padding-top: 0;
+}
+
+.wprs-results-search {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin: 0;
+}
+
+.wprs-results-search select {
+	margin: 0;
+}
+
+.wprs-results-table th,
+.wprs-results-table td {
+	vertical-align: top;
+}
+
+.wprs-row-meta {
+	color: #999;
+	font-size: 12px;
+}
+
+.wprs-empty {
+	color: #aaa;
+}
+
+.wprs-src-group {
+	margin-bottom: 10px;
+}
+
+.wprs-src-label {
+	display: block;
+	color: #50575e;
+	font-size: 11px;
+	font-weight: 600;
+	margin-bottom: 4px;
+}
+
+.wprs-src-hint {
+	margin: 8px 0 0;
+	font-size: 11px;
+	color: #787c82;
+	line-height: 1.4;
+}
+
+.wprs-term-row {
+	margin-bottom: 6px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.wprs-term-badge {
+	display: inline-block;
+	padding: 2px 6px;
+	border-radius: 3px;
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.wprs-term-badge--risk {
+	background: #fbc4c4;
+	color: #c00;
+}
+
+.wprs-term-badge--ignored {
+	background: #e0e0e0;
+	color: #555;
+	text-decoration: line-through;
+}
+
+.wprs-term-action {
+	font-size: 12px;
+	white-space: nowrap;
+	text-decoration: none;
+}
+
+.wprs-term-action--ignore {
+	color: #b32d2e;
+}
+
+.wprs-term-action--unignore {
+	color: #2271b1;
+}
+
+.wprs-snip-toggle {
+	text-decoration: none;
+}
+
+.wprs-snippets-box {
+	margin-top: 5px;
+}
+
 .wprs-mark {
 	background: #fbc4c4;
 	color: #c00;
@@ -133,13 +237,21 @@
 }
 
 .wprs-snip {
-	margin-bottom: 0.75em;
-	font-size: 12px;
+	margin-bottom: 8px;
+	font-size: 13px;
+	color: #444;
 	line-height: 1.5;
+}
+
+.wprs-snip__content {
+	font-size: 12px;
+	font-family: monospace, monospace;
+	white-space: pre-wrap;
+	word-break: break-all;
 }
 
 .wprs-snip-cell,
 .wprs-terms-cell,
-.wprs-ignored-cell {
+.wprs-whitelist-cell {
 	word-break: break-word;
 }

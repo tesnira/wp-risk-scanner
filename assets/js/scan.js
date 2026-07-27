@@ -167,4 +167,22 @@
 				});
 		});
 	});
+
+	document.querySelectorAll('.wprs-snip-toggle').forEach(function (link) {
+		link.addEventListener('click', function (e) {
+			e.preventDefault();
+			var box = link.nextElementSibling;
+			if (!box || !box.classList.contains('wprs-snippets-box')) {
+				return;
+			}
+			var open = box.hasAttribute('hidden');
+			if (open) {
+				box.removeAttribute('hidden');
+				link.textContent = (i18n.hideSnippets || '收起内容片段 ▴');
+			} else {
+				box.setAttribute('hidden', 'hidden');
+				link.textContent = (i18n.showSnippets || '查看内容片段 ▾');
+			}
+		});
+	});
 })();

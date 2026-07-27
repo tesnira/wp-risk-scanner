@@ -429,24 +429,28 @@ class WPRS_Scanner {
 	 * 查询风险结果列表。
 	 *
 	 * @param array<string, mixed> $args 筛选参数。
-	 * @return array{items: array<int, object>, total: int, pages: int}
+	 * @return array{items: array<int, object>, total: int, pages: int, offset: int}
 	 */
 	public static function query_results( $args = array() ) {
 		global $wpdb;
-		$table    = WPRS_Activator::table_results();
-		$page     = max( 1, isset( $args['paged'] ) ? (int) $args['paged'] : 1 );
-		$per_page = max( 1, min( 100, isset( $args['per_page'] ) ? (int) $args['per_page'] : 20 ) );
-		$offset   = ( $page - 1 ) * $per_page;
-		$status   = isset( $args['status'] ) ? sanitize_key( $args['status'] ) : 'risk';
-		$post_type = isset( $args['post_type'] ) ? sanitize_key( $args['post_type'] ) : '';
-		$search   = isset( $args['s'] ) ? sanitize_text_field( (string) $args['s'] ) : '';
+		$table       = WPRS_Activator::table_results();
+		$page        = max( 1, isset( $args['paged'] ) ? (int) $args['paged'] : 1 );
+		$per_page    = max( 1, min( 100, isset( $args['per_page'] ) ? (int) $args['per_page'] : 20 ) );
+		$offset      = ( $page - 1 ) * $per_page;
+		$status      = isset( $args['status'] ) ? sanitize_key( $args['status'] ) : 'risk';
+		$post_type   = isset( $args['post_type'] ) ? sanitize_key( $args['post_type'] ) : '';
+		$search      = isset( $args['s'] ) ? sanitize_text_field( (string) $args['s'] ) : '';
+		$search_type = isset( $args['search_type'] ) ? sanitize_key( $args['search_type'] ) : 'title';
+		if ( ! in_array( $search_type, array( 'title', 'risk_term' ), true ) ) {
+			$search_type = 'title';
+		}
 
-		$where = array( '1=1' );
+		$where  = array( '1=1' );
 		$params = array();
 
 		if ( 'risk' === $status ) {
 			$where[] = "risk_terms_found IS NOT NULL AND risk_terms_found != '' AND risk_terms_found != '[]'";
-		} elseif ( 'clean' === $status ) {
+		} elseif ( 'clean' === $status || 'compliant' === $status ) {
 			$where[] = "(risk_terms_found IS NULL OR risk_terms_found = '' OR risk_terms_found = '[]')";
 		}
 		if ( '' !== $post_type ) {
@@ -454,8 +458,13 @@ class WPRS_Scanner {
 			$params[] = $post_type;
 		}
 		if ( '' !== $search ) {
-			$where[]  = 'post_title LIKE %s';
-			$params[] = '%' . $wpdb->esc_like( $search ) . '%';
+			if ( 'risk_term' === $search_type ) {
+				$where[]  = 'risk_terms_found LIKE %s';
+				$params[] = '%' . $wpdb->esc_like( $search ) . '%';
+			} else {
+				$where[]  = 'post_title LIKE %s';
+				$params[] = '%' . $wpdb->esc_like( $search ) . '%';
+			}
 		}
 
 		$where_sql = implode( ' AND ', $where );
@@ -483,9 +492,10 @@ class WPRS_Scanner {
 		}
 
 		return array(
-			'items' => is_array( $items ) ? $items : array(),
-			'total' => $total,
-			'pages' => (int) ceil( $total / $per_page ),
+			'items'  => is_array( $items ) ? $items : array(),
+			'total'  => $total,
+			'pages'  => (int) ceil( $total / $per_page ),
+			'offset' => $offset,
 		);
 	}
 
